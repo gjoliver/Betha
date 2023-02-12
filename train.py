@@ -5,7 +5,7 @@ import ray
 import torch
 from transformers import AutoTokenizer
 
-from patched import Mailman, PatchedTestLM
+from patched import Mailman, PatchedTestLM, PatchedGPTJ6B
 
 
 MODEL_PATH = "/mnt/shared_storage/jungong/gpt_j/models/models--EleutherAI--gpt-j-6B/snapshots/6e35e2148e92edf096e94d39ac2b98ad59e25975/"
@@ -33,11 +33,7 @@ def run_gpt_j_6b(shards, args):
     inputs = tokenizer("i love large language model", return_tensors="pt")
 
     # Forward pass.
-    print("111: ", ray.get([shards[0].forward.remote(inputs)]))
-    for shard in shards[1:]:
-        out_ref = shard.forward.remote()
-        ray.wait([out_ref], fetch_local=False)
-    out = ray.get(out_ref)
+    out = ray.get(forward(shards, inputs))
 
     print("gpt-j: ", tokenizer.decode(out[0].tolist()))
 
@@ -105,8 +101,8 @@ if __name__ == "__main__":
     mailman = Mailman.options(name="mailman").remote()
 
     try:
-        run_test(load_test_model())
-        #run_gpt_j_6b(load_gpt_j_6b(args), args)
+        #run_test(load_test_model())
+        run_gpt_j_6b(load_gpt_j_6b(args), args)
     except Exception:
         import time
         # Give Ray a few seconds to stream back the error logs.
