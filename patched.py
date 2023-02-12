@@ -1,3 +1,5 @@
+import gc
+
 import ray
 import torch
 import torch.nn as nn
@@ -140,6 +142,9 @@ class PatchedModel(nn.Module):
         # Create optimizer now that everything is loaded.
         self._optimizer = torch.optim.AdamW(self._model.parameters(), lr=0.1)
 
+        # Free up memory.
+        gc.collect()
+
     def forward(self, data=None):
         if data is None:
             # Feed dummy data for non-first shards.
@@ -234,3 +239,13 @@ class PatchedGPTJ6B(PatchedModel):
             self._model_path,
             torch_dtype=torch.bfloat16,
         )
+
+    def forward(self, data=None):
+        if data is None:
+            # Feed dummy data for non-first shards.
+            data = torch.tensor(0)
+
+        # GPT-J inputs are dicts.
+        self._out = self._model(**move_tensor_to_device(data, "cuda:0"))
+
+        return self._out.detach().cpu().numpy()
