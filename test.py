@@ -1,41 +1,33 @@
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+class TestBlock(nn.Module):
+    def __init__(self, *shape):
+        super().__init__()
+        self.layer = nn.Linear(*shape)
+
+    def forward(self, x):
+        return F.relu(self.layer(x))
 
 
 class TestLM(nn.Module):
     """A small toy model for testing purpose.
     """
+
     def __init__(self):
         super().__init__()
 
-        self.conv1 = nn.Conv2d(1, 32, 3, 1)
-        self.conv2 = nn.Conv2d(32, 64, 3, 1)
-
-        self.dropout1 = nn.Dropout2d(0.25)
-        self.dropout2 = nn.Dropout2d(0.5)
-
-        self.fc1 = nn.Linear(9216, 128)
-        self.fc2 = nn.Linear(128, 10)
+        self.blk1 = TestBlock(10, 10)
+        self.blk2 = TestBlock(10, 10)
+        self.blk3 = TestBlock(10, 10)
+        self.out = nn.Linear(10, 10)
 
     def forward(self, x):
-        x = self.conv1(x)
-        x = F.relu(x)
-
-        x = self.conv2(x)
-        x = F.relu(x)
-
-        x = F.max_pool2d(x, 2)
-
-        x = self.dropout1(x)
-        x = torch.flatten(x, 1)
-        x = self.fc1(x)
-        x = F.relu(x)
-
-        x = self.dropout2(x)
-        x = self.fc2(x)
-
-        output = F.log_softmax(x, dim=1)
+        x = self.blk1(x)
+        x = self.blk2(x)
+        x = self.blk3(x)
+        output = F.softmax(self.out(x), dim=1)
 
         return output
 
@@ -46,12 +38,16 @@ class TestLM(nn.Module):
 TEST_SHARDING = [
     {
         "inputs": [],
-        "outputs": ["dropout1"],
-        "modules": ["conv1", "conv2", "dropout1"],
+        "outputs": ["blk2"],
+        "grad_inputs": ["blk3"],
+        "grad_outputs": [],
+        "modules": ["blk1", "blk2"],
     },
     {
-        "inputs": ["dropout1"],
+        "inputs": ["blk2"],
         "outputs": [],
-        "modules": ["dropout2", "fc1", "fc2"],
+        "grad_inputs": [],
+        "grad_outputs": ["blk3"],
+        "modules": ["blk3", "out"],
     },
 ]

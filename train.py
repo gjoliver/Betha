@@ -1,5 +1,3 @@
-import json
-
 from accelerate import init_empty_weights, load_checkpoint_in_model
 import ray
 import torch
@@ -12,31 +10,28 @@ MODEL_PATH = "/mnt/shared_storage/jungong/gpt_j/models/models--EleutherAI--gpt-j
 
 
 def run(shards):
-    random_data = torch.rand((1, 1, 28, 28))
-    
-    # Forward pass.
-    ray.wait([shards[0].forward.remote(random_data)])
-    for shard in shards[1:]:
-        out_ref = shard.forward.remote()
-    out = ray.get(out_ref)
-    print(out)
+    for _ in range(100):
+        random_data = torch.rand((1, 10))
+        label = torch.tensor(
+            [[0, 0, 1, 0, 0, 0, 0, 0, 0, 0]], dtype=torch.float32
+        )
 
-    # Backward pass.
-    
+        # Forward pass.
+        ray.wait([shards[0].forward.remote(random_data)])
+        for shard in shards[1:]:
+            out_ref = shard.forward.remote()
+            ray.wait([out_ref], fetch_local=False)
+        out = ray.get(out_ref)
 
-    return
+        print(out)
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+        # Backward pass.
+        ray.wait([shards[-1].backward.remote(label)])
+        for shard in reversed(shards[:-1]):
+            ray.wait([shard.backward.remote()], fetch_local=False)
 
-    while True:
-        x = input("prompt (press RETURN to exit): ")
-
-        if not x: break
-
-        inputs = tokenizer(x, return_tensors="pt")
-        outputs = model.generate(**inputs)
-
-        print("gpt-j: ", tokenizer.decode(outputs[0].tolist()))
+        # Step.
+        ray.wait([shard.step.remote() for shard in shards])
 
 
 def load_model():
@@ -45,7 +40,7 @@ def load_model():
     for shard in PatchedTestLM.SHARDING_PLAN:
         model_shard = PatchedTestLM.remote()
         model_shards.append(model_shard)
-        refs.append(model_shard.load_and_patch.remote(shard))
+        refs.append(model_shard.prepare.remote(shard))
 
     # Wait for all model shards to finish loading.
     ray.wait(refs)

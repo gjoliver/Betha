@@ -22,14 +22,14 @@ class Mailman:
         self._tensors.clear()
 
 
-def get_fake_output_hook(key):
+def get_mailman_read_hook(key):
     def hook(module, input, output):
         mailman = ray.get_actor("mailman")
         return ray.get(mailman.get_tensor.remote(key))
     return hook
 
 
-def get_save_output_hook(key):
+def get_mailman_write_hook(key):
     def hook(module, input, output):
         mailman = ray.get_actor("mailman")
         ray.wait([mailman.save_tensor.remote(key, output)])
@@ -41,11 +41,16 @@ def get_save_output_hook(key):
 class PatchedModel(nn.Module):
     def __init__(self):
         super().__init__()
+
         self._model = None
+        self._optimizer = None
         self._out = None
 
-    def _patch_model(self, sharding):
+    def prepare(self, sharding):
+        assert self._model is None, "prepare() can only be called once."
         assert sharding, "sharding should contain at least one module."
+
+        self.load_model()
 
         for name, module in self._model.named_children():
             if name not in sharding["modules"]:
@@ -54,32 +59,62 @@ class PatchedModel(nn.Module):
                 setattr(self._model, name, nn.Identity())
 
         # Handle input modules.
-        for module_name in sharding["inputs"]:
+        for name in sharding["inputs"]:
             # These are the modules whose outputs are required
             # to run this shard.
-            # We basically need to fake these outputs here.
-            getattr(self._model, module_name).register_forward_hook(
-                get_fake_output_hook(module_name)
+            # We need to fetch and fake these outputs here.
+            getattr(self._model, name).register_forward_hook(
+                get_mailman_read_hook(name)
             )
 
         # Handle output modules.
-        for module_name in sharding["outputs"]:
+        for name in sharding["outputs"]:
             # These are the modules whose outputs are needed by
             # modules from other shards.
             # We must save them to the global mailman actor.
-            getattr(self._model, module_name).register_forward_hook(
-                get_save_output_hook(module_name)
+            getattr(self._model, name).register_forward_hook(
+                get_mailman_write_hook(name)
             )
 
-    def forward(self, t=None):
-        if t is None:
-            # Feed dummy data for non-first shards.
-            t = torch.tensor(0)
+        # Handle gradient input modules.
+        for name in sharding["grad_inputs"]:
+            # Fetch gradients to be flown into the upstream modules.
+            getattr(self._model, name).register_full_backward_hook(
+                get_mailman_read_hook(f"{name}/grads")
+            )
 
-        self._out = self._model(t)
+        # Handle gradient output modules.
+        for name in sharding["grad_outputs"]:
+            # Fetch gradients to be flown into the upstream modules.
+            getattr(self._model, name).register_full_backward_hook(
+                get_mailman_write_hook(f"{name}/grads")
+            )
+
+        # Create optimizer now that everything is loaded.
+        self._optimizer = torch.optim.AdamW(self._model.parameters(), lr=0.1)
+
+    def forward(self, data=None):
+        if data is None:
+            # Feed dummy data for non-first shards.
+            data = torch.tensor(0)
+
+        self._out = self._model(data)
         return self._out.detach().numpy()
 
-    def load_and_patch(self, sharding):
+    def backward(self, target=None):
+        if target is None:
+            # Dummy label.
+            target = torch.randn(*self._out.shape)
+        loss = F.mse_loss(self._out, target)
+        loss.backward()
+        
+        self._out = None
+
+    def step(self):
+        self._optimizer.step()
+        self._optimizer.zero_grad()
+
+    def load_model(self, sharding):
         raise NotImplementedError()
 
 
@@ -87,15 +122,16 @@ class PatchedModel(nn.Module):
 class PatchedTestLM(PatchedModel):
     SHARDING_PLAN = TEST_SHARDING
 
-    def load_and_patch(self, sharding):
+    def load_model(self):
         self._model = TestLM()
-        self._patch_model(sharding)
 
 
 @ray.remote(num_gpus=1)
 class PatchedGPTJ6B(PatchedModel):
     SHARDING_PLAN = []
 
-    def load_and_patch(self, sharding):
-        self._model = AutoModelForCausalLM.from_pretrained(MODEL_PATH)
-        self._patch_model(sharding)
+    def load_model(self):
+        self._model = AutoModelForCausalLM.from_pretrained(
+            MODEL_PATH,
+            torch_dtype=torch.bfloat16,
+        )
