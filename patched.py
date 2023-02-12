@@ -14,18 +14,18 @@ class Mailman:
 
     def get_tensor(self, key):
         return self._tensors[key]
-    
+
     def save_tensor(self, key, tensor):
         self._tensors[key] = tensor
 
     def clear(self):
         self._tensors.clear()
 
-        
+
 def move_tensor_to_device(tensor, device):
     if isinstance(tensor, list):
         return [
-           move_tensor_to_device(e, device) for e in tensor           
+           move_tensor_to_device(e, device) for e in tensor
         ]
     elif isinstance(tensor, dict):
         return {
@@ -34,6 +34,32 @@ def move_tensor_to_device(tensor, device):
         }
     elif isinstance(tensor, torch.Tensor):
         return tensor.to(device)
+
+
+def get_module_by_path(module, path):
+    if not isinstance(path, list):
+        path = path.split(".")
+    while path:
+        p = path[0]
+        try:
+            p = int(p)
+            module = module[p]
+        except ValueError:
+            module = getattr(module, p)
+        path = path[1:]
+    return module
+
+
+def set_module_by_path(parent_module, path, new_module):
+    if not isinstance(path, list):
+        path = path.split(".")
+    parent_module = get_module_by_path(parent_module, path[:-1])
+    p = path[-1]
+    try:
+        p = int(p)
+        parent_module[p] = new_module
+    except ValueError:
+        setattr(parent_module, p, new_module)
 
 
 def get_mailman_read_hook(key):
@@ -68,18 +94,18 @@ class PatchedModel(nn.Module):
 
         self.load_model()
 
-        for name, _ in self._model.named_children():
+        for name in self.children_modules():
             if name not in sharding["modules"]:
                 # Replace model with Identity since these are the computations
                 # that will actually run on a different instance.
-                setattr(self._model, name, nn.Identity())
+                set_module_by_path(self._model, name, nn.Identity())
 
         # Handle input modules.
         for name in sharding["inputs"]:
             # These are the modules whose outputs are required
             # to run this shard.
             # We need to fetch and fake these outputs here.
-            getattr(self._model, name).register_forward_hook(
+            get_module_by_path(self._model, name).register_forward_hook(
                 get_mailman_read_hook(name)
             )
 
@@ -88,28 +114,28 @@ class PatchedModel(nn.Module):
             # These are the modules whose outputs are needed by
             # modules from other shards.
             # We must save them to the global mailman actor.
-            getattr(self._model, name).register_forward_hook(
+            get_module_by_path(self._model, name).register_forward_hook(
                 get_mailman_write_hook(name)
             )
 
         # Handle gradient input modules.
         for name in sharding["grad_inputs"]:
             # Fetch gradients to be flown into the upstream modules.
-            getattr(self._model, name).register_full_backward_hook(
+            get_module_by_path(self._model, name).register_full_backward_hook(
                 get_mailman_read_hook(f"{name}/grads")
             )
 
         # Handle gradient output modules.
         for name in sharding["grad_outputs"]:
             # Fetch gradients to be flown into the upstream modules.
-            getattr(self._model, name).register_full_backward_hook(
+            get_module_by_path(self._model, name).register_full_backward_hook(
                 get_mailman_write_hook(f"{name}/grads")
             )
 
         # Now move everything to GPU.
         assert torch.cuda.is_available(), "No GPU?"
-        for _, module in self._model.named_children():
-            module.cuda()
+        for name in self.children_modules():
+            get_module_by_path(self._model, name).cuda()
 
         # Create optimizer now that everything is loaded.
         self._optimizer = torch.optim.AdamW(self._model.parameters(), lr=0.1)
@@ -120,7 +146,7 @@ class PatchedModel(nn.Module):
             data = torch.tensor(0)
 
         self._out = self._model(move_tensor_to_device(data, "cuda:0"))
-        
+
         return self._out.detach().cpu().numpy()
 
     def backward(self, target=None):
@@ -129,12 +155,18 @@ class PatchedModel(nn.Module):
             target = torch.randn(*self._out.shape)
         loss = F.mse_loss(self._out, move_tensor_to_device(target, "cuda:0"))
         loss.backward()
-        
+
         self._out = None
 
     def step(self):
         self._optimizer.step()
         self._optimizer.zero_grad()
+
+    def children_modules(self):
+        modules = []
+        for shard in self.SHARDING_PLAN:
+            modules += shard["modules"]
+        return modules
 
     def load_model(self, sharding):
         raise NotImplementedError()

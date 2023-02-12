@@ -8,9 +8,6 @@ from transformers import AutoTokenizer
 from patched import Mailman, PatchedTestLM, PatchedGPTJ6B
 
 
-MODEL_PATH = "/mnt/shared_storage/jungong/gpt_j/models/models--EleutherAI--gpt-j-6B/snapshots/6e35e2148e92edf096e94d39ac2b98ad59e25975/"
-
-
 def forward(shards, data):
     ray.get([shards[0].forward.remote(data)])
     for shard in shards[1:]:
@@ -25,6 +22,32 @@ def backward(shards, target):
     ray.get([shards[-1].backward.remote(target)])
     for shard in reversed(shards[:-1]):
         ray.get([shard.backward.remote()])
+
+
+def get_module_by_path(module, path):
+    if not isinstance(path, list):
+        path = path.split(".")
+    while path:
+        p = path[0]
+        try:
+            p = int(p)
+            module = module[p]
+        except ValueError:
+            module = getattr(module, p)
+        path = path[1:]
+    return module
+
+
+def set_module_by_path(parent_module, path, new_module):
+    if not isinstance(path, list):
+        path = path.split(".")
+    parent_module = get_module_by_path(parent_module, path[:-1])
+    p = path[-1]
+    try:
+        p = int(p)
+        parent_module[p] = new_module
+    except ValueError:
+        setattr(parent_module, p, new_module)
 
 
 def run_gpt_j_6b(shards, args):
