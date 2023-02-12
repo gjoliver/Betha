@@ -45,7 +45,7 @@ def run_test(shards):
         # Forward pass.
         print(ray.get(forward(shards, random_data)))
 
-        # Backward pass.
+        # Backward pass. Fake target.
         label = torch.tensor(
             [[0, 0, 1, 0, 0, 0, 0, 0, 0, 0]], dtype=torch.float32
         )

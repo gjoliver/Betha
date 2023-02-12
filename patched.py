@@ -119,7 +119,7 @@ class PatchedModel(nn.Module):
             # Feed dummy data for non-first shards.
             data = torch.tensor(0)
 
-        self._out = self._model(data.cuda())
+        self._out = self._model(move_tensor_to_device(data, "cuda:0"))
         
         return self._out.detach().cpu().numpy()
 
@@ -127,7 +127,7 @@ class PatchedModel(nn.Module):
         if target is None:
             # Dummy label.
             target = torch.randn(*self._out.shape)
-        loss = F.mse_loss(self._out, target.cuda())
+        loss = F.mse_loss(self._out, move_tensor_to_device(target, "cuda:0"))
         loss.backward()
         
         self._out = None
