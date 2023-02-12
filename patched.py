@@ -22,10 +22,6 @@ class Mailman:
         self._tensors.clear()
 
 
-def init():
-    return Mailman.options(name="mailman").remote()
-
-
 def get_fake_output_hook(key):
     def hook(module, input, output):
         mailman = ray.get_actor("mailman")
@@ -42,11 +38,11 @@ def get_save_output_hook(key):
     return hook
 
 
-@ray.remote
 class PatchedModel(nn.Module):
     def __init__(self):
         super().__init__()
-        self._model = None  # Initialize to None
+        self._model = None
+        self._out = None
 
     def _patch_model(self, sharding):
         assert sharding, "sharding should contain at least one module."
@@ -75,9 +71,31 @@ class PatchedModel(nn.Module):
                 get_save_output_hook(module_name)
             )
 
+    def forward(self, t=None):
+        if t is None:
+            # Feed dummy data for non-first shards.
+            t = torch.tensor(0)
+
+        self._out = self._model(t)
+        return self._out.detach().numpy()
+
     def load_and_patch(self, sharding):
-        self._model = TestLM() # AutoModelForCausalLM.from_pretrained(MODEL_PATH)
+        raise NotImplementedError()
+
+
+@ray.remote(num_gpus=1)
+class PatchedTestLM(PatchedModel):
+    SHARDING_PLAN = TEST_SHARDING
+
+    def load_and_patch(self, sharding):
+        self._model = TestLM()
         self._patch_model(sharding)
 
-    def call(self, t):
-        return self._model(t)
+
+@ray.remote(num_gpus=1)
+class PatchedGPTJ6B(PatchedModel):
+    SHARDING_PLAN = []
+
+    def load_and_patch(self, sharding):
+        self._model = AutoModelForCausalLM.from_pretrained(MODEL_PATH)
+        self._patch_model(sharding)
