@@ -24,35 +24,9 @@ def backward(shards, target):
         ray.get([shard.backward.remote()])
 
 
-def get_module_by_path(module, path):
-    if not isinstance(path, list):
-        path = path.split(".")
-    while path:
-        p = path[0]
-        try:
-            p = int(p)
-            module = module[p]
-        except ValueError:
-            module = getattr(module, p)
-        path = path[1:]
-    return module
-
-
-def set_module_by_path(parent_module, path, new_module):
-    if not isinstance(path, list):
-        path = path.split(".")
-    parent_module = get_module_by_path(parent_module, path[:-1])
-    p = path[-1]
-    try:
-        p = int(p)
-        parent_module[p] = new_module
-    except ValueError:
-        setattr(parent_module, p, new_module)
-
-
 def run_gpt_j_6b(shards, args):
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir)
-    
+
     inputs = tokenizer("i love large language model", return_tensors="pt")
 
     # Forward pass.
@@ -91,7 +65,7 @@ def load_test_model():
 
     return model_shards
 
-        
+
 def load_gpt_j_6b(args):
     model_shards = []
     refs = []
@@ -115,7 +89,7 @@ if __name__ == "__main__":
         default="",
         help="Path to a pretrained huggingface GPT-J model.",
     )
-    
+
     args = parser.parse_args()
 
     ray.init()

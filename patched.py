@@ -25,7 +25,7 @@ class Mailman:
 
 
 def move_tensor_to_device(tensor, device):
-    if isinstance(tensor, list):
+    if isinstance(tensor, (list, tuple)):
         return [
            move_tensor_to_device(e, device) for e in tensor
         ]
@@ -34,7 +34,7 @@ def move_tensor_to_device(tensor, device):
             k: move_tensor_to_device(v, device)
             for k, v in tensor.items()
         }
-    elif isinstance(tensor, torch.Tensor):
+    else:
         return tensor.to(device)
 
 
@@ -140,7 +140,7 @@ class PatchedModel(nn.Module):
             get_module_by_path(self._model, name).cuda()
 
         # Create optimizer now that everything is loaded.
-        self._optimizer = torch.optim.AdamW(self._model.parameters(), lr=0.1)
+        self._optimizer = torch.optim.SGD(self._model.parameters(), lr=0.1)
 
         # Free up memory.
         gc.collect()
@@ -240,12 +240,12 @@ class PatchedGPTJ6B(PatchedModel):
             torch_dtype=torch.bfloat16,
         )
 
-    def forward(self, data=None):
-        if data is None:
+    def forward(self, inputs=None):
+        if inputs is None:
             # Feed dummy data for non-first shards.
-            data = torch.tensor(0)
+            inputs = torch.tensor(0)
 
         # GPT-J inputs are dicts.
-        self._out = self._model(**move_tensor_to_device(data, "cuda:0"))
+        self._out = self._model(**move_tensor_to_device(inputs, "cuda:0"))
 
         return self._out.detach().cpu().numpy()
