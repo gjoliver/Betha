@@ -5,12 +5,7 @@ import torch
 from transformers import AutoConfig, AutoTokenizer
 
 from mailman import Mailman
-from model import (
-    EmbeddingModule,
-    GPTJBlocksModule,
-    GPTJBlockShardConfig,
-    LMHeadModule,
-)
+from model import Embedding, GPTJBlocks, GPTJBlockShardConfig, LMHead,
 from test import TestLMShard1, TestLMShard2
 
 
@@ -46,20 +41,20 @@ def load_gpt_j(args):
         args.model_dir
     )
     model_shards = [
-        EmbeddingModule.remote(config),  # GPU 0
-        GPTJBlocksModule.remote(
+        Embedding.remote(config),  # GPU 0
+        GPTJBlocks.remote(
             config,
             GPTJBlockShardConfig(0, 5, includ_layer_norm=False)
         ), # GPU 1
-        GPTJBlocksModule.remote(
+        GPTJBlocks.remote(
             config,
             GPTJBlockShardConfig(6, 10, includ_layer_norm=False)
         ), # GPU 2
-        GPTJBlocksModule.remote(
+        GPTJBlocks.remote(
             config,
             GPTJBlockShardConfig(11, 15, includ_layer_norm=True)
         ), # GPU 3
-        LMHeadModule.remote(config),     # GPU 0
+        LMHead.remote(config),     # GPU 0
     ]
     return model_shards
 

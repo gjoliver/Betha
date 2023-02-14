@@ -36,7 +36,7 @@ def init_weights(config, module):
 
 
 @ray.remote(num_gpus=0.5)
-class EmbeddingModule(nn.Module):
+class Embedding(nn.Module):
     def __init__(self, config):
         super().__init__()
 
@@ -98,7 +98,7 @@ class GPTJBlockShardConfig:
 
 
 @ray.remote(num_gpus=1)
-class GPTJBlocksModule(nn.Module):
+class GPTJBlocks(nn.Module):
     def __init__(self, config, shard_config):
         super().__init__()
 
@@ -139,7 +139,7 @@ class GPTJBlocksModule(nn.Module):
 
 
 @ray.remote(num_gpus=0.5)
-class LMHeadModule(nn.Module):
+class LMHead(nn.Module):
     def __init__(self, config):
         super().__init__()
 
