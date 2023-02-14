@@ -44,41 +44,55 @@ def run_gpt_j(shards, args):
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir)
 
     inputs = tokenizer("i love large language model", return_tensors="pt")
+    # Self-supervised learning man! Inputs are the labels too.
+    labels = inputs['input_ids']
 
     # Forward pass.
-    out = forward(shards, inputs)
+    out = forward(shards, inputs=inputs, labels=labels)
 
-    print("gpt-j: ", out)
+    print("loss: ", out["loss"].numpy())
+
+    # Backward pass.
+    backward(shards)
+
+    # Step.
+    ray.wait([shard.step.remote() for shard in shards])
 
 
 def load_gpt_j(args):
     config = AutoConfig.from_pretrained(
         args.model_dir
     )
+    lr = 0.0001
     model_shards = [
         Shard.options(num_gpus=0.5).remote(
-            lambda: EmbeddingModule(config)
+            lambda: EmbeddingModule(config),
+            lr=lr,
         ),  # GPU 0
         Shard.options(num_gpus=1).remote(
             lambda: GPTJBlocksModule(
                 config,
                 GPTJBlockShardConfig(0, 5, includ_layer_norm=False)
-            )
+            ),
+            lr=lr,
         ), # GPU 1
         Shard.options(num_gpus=1).remote(
             lambda: GPTJBlocksModule(
                 config,
                 GPTJBlockShardConfig(6, 10, includ_layer_norm=False)
-            )
+            ),
+            lr=lr,
         ), # GPU 2
         Shard.options(num_gpus=1).remote(
             lambda: GPTJBlocksModule(
                 config,
                 GPTJBlockShardConfig(11, 15, includ_layer_norm=True)
-            )
+            ),
+            lr=lr,
         ), # GPU 3
         Shard.options(num_gpus=0.5).remote(
             lambda: LMHeadModule(config),
+            lr=lr,
         ), # GPU 0
     ]
     return model_shards
