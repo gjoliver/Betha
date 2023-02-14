@@ -6,29 +6,14 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 
 from typing import Dict, Optional, Tuple, Union
 
-import ray
 import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
 
-from transformers.utils import logging
 from transformers.models.gptj.modeling_gptj import GPTJBlock
 
 
-logger = logging.get_logger(__name__)
-
-
 DTYPE = torch.bfloat16
-
-
-def fetch_tensor(key):
-    mailman = ray.get_actor("mailman")
-    return ray.get(mailman.get_tensor.remote(key))
-
-
-def save_tensor(key, tensor):
-    mailman = ray.get_actor("mailman")
-    ray.get([mailman.save_tensor.remote(key, tensor.to("cpu"))])
 
 
 def init_weights(config, module):

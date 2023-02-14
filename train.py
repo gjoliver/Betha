@@ -1,11 +1,10 @@
 import argparse
 
-from accelerate import init_empty_weights, load_checkpoint_in_model
 import ray
 import torch
 from transformers import AutoTokenizer
 
-from patched import Mailman, PatchedTestLM, PatchedGPTJ6B
+from mailman import Mailman
 
 
 def forward(shards, data):
