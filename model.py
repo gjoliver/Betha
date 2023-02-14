@@ -119,7 +119,7 @@ class GPTJBlocksModule(nn.Module):
         input_shape: Tuple[int],
         hidden_states: torch.FloatTensor,
         attention_mask: Optional[torch.FloatTensor] = None,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Dict[str, Union[torch.Tensor, None]]:
         output_shape = input_shape + (hidden_states.size(-1),)
 
         for i, block in enumerate(self.h):
@@ -131,8 +131,18 @@ class GPTJBlocksModule(nn.Module):
 
         if self.ln_f:
             hidden_states = self.ln_f(hidden_states).view(output_shape)
-
-        return {"hidden_states": hidden_states}
+            # Output only hidden_states for last LMHead model.
+            return {
+                "hidden_states": hidden_states,
+            }
+        else:
+            # Have more attention blocks to run.
+            # Output everything including input_shape and attention_mask.
+            return {
+                "input_shape": input_shape,
+                "hidden_states": hidden_states,
+                "attention_mask": attention_mask,
+            }
 
 
 class LMHeadModule(nn.Module):

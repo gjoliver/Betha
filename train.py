@@ -46,9 +46,9 @@ def run_gpt_j(shards, args):
     inputs = tokenizer("i love large language model", return_tensors="pt")
 
     # Forward pass.
-    out = ray.get(forward(shards, inputs))
+    out = forward(shards, inputs)
 
-    print("gpt-j: ", tokenizer.decode(out[0].tolist()))
+    print("gpt-j: ", out)
 
 
 def load_gpt_j(args):
@@ -72,13 +72,13 @@ def load_gpt_j(args):
             )
         ), # GPU 2
         Shard.options(num_gpus=1).remote(
-            GPTJBlocksModule(
+            lambda: GPTJBlocksModule(
                 config,
                 GPTJBlockShardConfig(11, 15, includ_layer_norm=True)
             )
         ), # GPU 3
         Shard.options(num_gpus=0.5).remote(
-            LMHeadModule(config),
+            lambda: LMHeadModule(config),
         ), # GPU 0
     ]
     return model_shards

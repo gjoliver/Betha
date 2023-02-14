@@ -19,10 +19,14 @@ class Shard:
         self._outputs = self._module(**inputs)
 
         return {
-            k: v.detach() for k, v in self._outputs.items()
+            k: (v.detach() if isinstance(v, torch.Tensor) else v)
+            for k, v in self._outputs.items()
         }
 
     def backward(self, gradients):
+        def _requires_grad(v):
+            return isinstance(v, torch.Tensor) and v.requires_grad
+
         if not gradients:
             assert "loss" in self._outputs
 
@@ -33,12 +37,15 @@ class Shard:
             assert set(self._outputs.keys()) == set(gradients.keys())
 
             # Run backward passes.
-            for k, g in gradients.items():
-                self._outputs[k].backward(gradient=g)
+            for k, output in self._outputs.items():
+                if not _requires_grad(output):
+                    continue
+                output.backward(gradient=gradients[k])
 
         # Return accumulated gradients on the input tensors.
         return {
-            k: v.grad.data for k, v in self._inputs
+            k: (v.grad.data if _requires_grad(v) else v)
+            for k, v in self._inputs
         }
 
     def step(self):
