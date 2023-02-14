@@ -4,8 +4,10 @@ Based on:
 https://github.com/huggingface/transformers/blob/main/src/transformers/models/gptj/modeling_gptj.py
 """
 
+from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, Union
 
+import ray
 import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
@@ -33,8 +35,11 @@ def init_weights(config, module):
         module.weight.data.fill_(1.0)
 
 
+@ray.remote(num_gpus=0.5)
 class EmbeddingModule(nn.Module):
     def __init__(self, config):
+        super().__init__()
+
         self.embed_dim = config.n_embd
         self.vocab_size = config.vocab_size
 
@@ -85,6 +90,14 @@ class EmbeddingModule(nn.Module):
         }
 
 
+@dataclass
+class GPTJBlockShardConfig:
+    start_block: int
+    end_block: int
+    includ_layer_norm: bool = False
+
+
+@ray.remote(num_gpus=1)
 class GPTJBlocksModule(nn.Module):
     def __init__(self, config, shard_config):
         super().__init__()
@@ -125,9 +138,11 @@ class GPTJBlocksModule(nn.Module):
         return {"hidden_states": hidden_states}
 
 
+@ray.remote(num_gpus=0.5)
 class LMHeadModule(nn.Module):
     def __init__(self, config):
         super().__init__()
+
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
         init_weights(config, self.lm_head)
 
