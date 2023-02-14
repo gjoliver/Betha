@@ -35,8 +35,7 @@ def init_weights(config, module):
         module.weight.data.fill_(1.0)
 
 
-@ray.remote(num_gpus=0.5)
-class Embedding(nn.Module):
+class EmbeddingModule(nn.Module):
     def __init__(self, config):
         super().__init__()
 
@@ -97,8 +96,7 @@ class GPTJBlockShardConfig:
     includ_layer_norm: bool = False
 
 
-@ray.remote(num_gpus=1)
-class GPTJBlocks(nn.Module):
+class GPTJBlocksModule(nn.Module):
     def __init__(self, config, shard_config):
         super().__init__()
 
@@ -138,8 +136,7 @@ class GPTJBlocks(nn.Module):
         return {"hidden_states": hidden_states}
 
 
-@ray.remote(num_gpus=0.5)
-class LMHead(nn.Module):
+class LMHeadModule(nn.Module):
     def __init__(self, config):
         super().__init__()
 
@@ -152,12 +149,12 @@ class LMHead(nn.Module):
         labels: Optional[torch.LongTensor] = None,
     ) -> Dict[str, Union[torch.Tensor, None]]:
         # Compute logits.
-        lm_logits = self.lm_head(hidden_states).to(torch.float32)
+        logits = self.lm_head(hidden_states).to(torch.float32)
 
         loss = None
         if labels is not None:
             # Shift so that tokens < n predict n
-            shift_logits = lm_logits[..., :-1, :].contiguous()
+            shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
             loss_fct = CrossEntropyLoss()
@@ -165,4 +162,4 @@ class LMHead(nn.Module):
 
             loss = loss.to(hidden_states.dtype)
 
-        return {"loss": loss, "logits": lm_logits}
+        return {"loss": loss, "logits": logits}

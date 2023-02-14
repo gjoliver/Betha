@@ -5,24 +5,39 @@ import torch
 from transformers import AutoConfig, AutoTokenizer
 
 from mailman import Mailman
-from model import Embedding, GPTJBlocks, GPTJBlockShardConfig, LMHead,
+from model import (
+    EmbeddingModule,
+    GPTJBlocksModule,
+    GPTJBlockShardConfig,
+    LMHeadModule,
+)
+from shard import Shard
 from test import TestLMShard1, TestLMShard2
 
 
-def forward(shards, **inputs):
-    ray.get([shards[0].forward.remote(**inputs)])
-    for shard in shards[1:]:
-        ref = shard.forward.remote()
-        ray.wait([ref], fetch_local=False)
-    return ref
+# TODO(jungong) : We could use distributed queues here to run the
+# shards with pipeline parallelism.
+def forward(shards, inputs, labels):
+    for shard in shards[:-1]:
+        inputs = shard.forward.remote(inputs)
+        ray.wait([inputs], fetch_local=False)
+
+    # For last shard, get actual inputs so we can add labels.
+    inputs = ray.get(inputs)
+    inputs["labels"] = labels
+
+    outputs = shards[-1].forward.remote(inputs)
+
+    return ray.get(outputs)
 
 
-def backward(shards, target):
+def backward(shards):
     # backward() doesn't return data. So we can use ray.get() to wait
     # while fetching any potential errors.
-    ray.get([shards[-1].backward.remote(target)])
-    for shard in reversed(shards[:-1]):
-        ray.get([shard.backward.remote()])
+    gradients = {}
+    for shard in reversed(shards):
+        gradients = shard.backward.remote(gradients)
+        ray.wait([gradients], fetch_local=False)
 
 
 def run_gpt_j(shards, args):
@@ -41,36 +56,38 @@ def load_gpt_j(args):
         args.model_dir
     )
     model_shards = [
-        Embedding.remote(config),  # GPU 0
-        GPTJBlocks.remote(
+        EmbeddingModule.remote(config),  # GPU 0
+        GPTJBlocksModule.remote(
             config,
             GPTJBlockShardConfig(0, 5, includ_layer_norm=False)
         ), # GPU 1
-        GPTJBlocks.remote(
+        GPTJBlocksModule.remote(
             config,
             GPTJBlockShardConfig(6, 10, includ_layer_norm=False)
         ), # GPU 2
-        GPTJBlocks.remote(
+        GPTJBlocksModule.remote(
             config,
             GPTJBlockShardConfig(11, 15, includ_layer_norm=True)
         ), # GPU 3
-        LMHead.remote(config),     # GPU 0
+        LMHeadModule.remote(config),     # GPU 0
     ]
     return model_shards
 
 
 def run_test(shards):
-    for _ in range(10):
+    for _ in range(30):
         random_data = torch.rand((1, 10))
-
-        # Forward pass.
-        print(ray.get(forward(shards, x=random_data)))
-
-        # Backward pass. Fake target.
-        label = torch.tensor(
+        # Fake target.
+        labels = torch.tensor(
             [[0, 0, 1, 0, 0, 0, 0, 0, 0, 0]], dtype=torch.float32
         )
-        backward(shards, label)
+
+        # Forward pass.
+        result = forward(shards, inputs={"x": random_data}, labels=labels)
+        print(result)
+
+        # Backward pass.
+        backward(shards)
 
         # Step.
         ray.wait([shard.step.remote() for shard in shards])
@@ -78,8 +95,8 @@ def run_test(shards):
 
 def load_test_model():
     model_shards = [
-        TestLMShard1.remote(),
-        TestLMShard2.remote()
+        Shard.remote(lambda: TestLMShard1()),
+        Shard.remote(lambda: TestLMShard2()),
     ]
     return model_shards
 

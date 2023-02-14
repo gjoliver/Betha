@@ -1,9 +1,5 @@
-import ray
 import torch.nn as nn
 import torch.nn.functional as F
-
-
-from mailman import fetch_tensor, save_tensor
 
 
 class TestBlock(nn.Module):
@@ -15,7 +11,6 @@ class TestBlock(nn.Module):
         return F.relu(self.layer(x))
 
 
-@ray.remote
 class TestLMShard1(nn.Module):
     """A small toy model for testing purpose.
     """
@@ -27,12 +22,9 @@ class TestLMShard1(nn.Module):
         self.blk2 = TestBlock(10, 10)
 
     def forward(self, x):
-        # First shard. Store result in Mailman.
-        save_tensor("out1", self.blk2(self.blk1(x)))
-        return None
+        return {"x": self.blk2(self.blk1(x))}
 
 
-@ray.remote
 class TestLMShard2(nn.Module):
     """A small toy model for testing purpose.
     """
@@ -43,6 +35,11 @@ class TestLMShard2(nn.Module):
         self.blk3 = TestBlock(10, 10)
         self.out = nn.Linear(10, 10)
 
-    def forward(self):
-        out1 = fetch_tensor("out1")
-        return F.softmax(self.out(self.blk3(out1)), dim=1)
+    def forward(self, x, labels = None):
+        logits = F.softmax(self.out(self.blk3(x)), dim=1)
+        if labels is not None:
+            loss = F.mse_loss(logits, labels)
+        else:
+            loss = None
+
+        return {"loss": loss, "logits": logits}
