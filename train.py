@@ -5,6 +5,7 @@ import torch
 from transformers import AutoTokenizer
 
 from mailman import Mailman
+from test import TestLMShard1, TestLMShard2
 
 
 def forward(shards, data):
@@ -23,7 +24,7 @@ def backward(shards, target):
         ray.get([shard.backward.remote()])
 
 
-def run_gpt_j_6b(shards, args):
+def run_gpt_j(shards, args):
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir)
 
     inputs = tokenizer("i love large language model", return_tensors="pt")
@@ -52,20 +53,14 @@ def run_test(shards):
 
 
 def load_test_model():
-    model_shards = []
-    refs = []
-    for shard in PatchedTestLM.SHARDING_PLAN:
-        model_shard = PatchedTestLM.remote()
-        model_shards.append(model_shard)
-        refs.append(model_shard.prepare.remote(shard))
-
-    # Wait for all model shards to finish loading.
-    ray.wait(refs)
-
+    model_shards = [
+        TestLMShard1.remote(),
+        TestLMShard2.remote()
+    ]
     return model_shards
 
 
-def load_gpt_j_6b(args):
+def load_gpt_j(args):
     model_shards = []
     refs = []
     for shard in PatchedGPTJ6B.SHARDING_PLAN:
@@ -97,8 +92,8 @@ if __name__ == "__main__":
     mailman = Mailman.options(name="mailman").remote()
 
     try:
-        #run_test(load_test_model())
-        run_gpt_j_6b(load_gpt_j_6b(args), args)
+        run_test(load_test_model())
+        #run_gpt_j(load_gpt_j(args), args)
     except Exception:
         import time
         # Give Ray a few seconds to stream back the error logs.
