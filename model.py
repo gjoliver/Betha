@@ -7,7 +7,6 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, Union
 
-import ray
 import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss

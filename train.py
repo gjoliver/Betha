@@ -4,7 +4,6 @@ import ray
 import torch
 from transformers import AutoConfig, AutoTokenizer
 
-from mailman import Mailman
 from model import (
     EmbeddingModule,
     GPTJBlocksModule,
@@ -17,14 +16,15 @@ from test import TestLMShard1, TestLMShard2
 
 # TODO(jungong) : We could use distributed queues here to run the
 # shards with pipeline parallelism.
-def forward(shards, inputs, labels):
+def forward(shards, inputs, labels=None):
     for shard in shards[:-1]:
         inputs = shard.forward.remote(inputs)
         ray.wait([inputs], fetch_local=False)
 
     # For last shard, get actual inputs so we can add labels.
     inputs = ray.get(inputs)
-    inputs["labels"] = labels
+    if labels is not None:
+        inputs["labels"] = labels
 
     outputs = shards[-1].forward.remote(inputs)
 
@@ -46,7 +46,7 @@ def run_gpt_j(shards, args):
     inputs = tokenizer("i love large language model", return_tensors="pt")
 
     # Forward pass.
-    out = ray.get(forward(shards, **inputs))
+    out = ray.get(forward(shards, inputs))
 
     print("gpt-j: ", tokenizer.decode(out[0].tolist()))
 
@@ -56,20 +56,30 @@ def load_gpt_j(args):
         args.model_dir
     )
     model_shards = [
-        EmbeddingModule.remote(config),  # GPU 0
-        GPTJBlocksModule.remote(
-            config,
-            GPTJBlockShardConfig(0, 5, includ_layer_norm=False)
+        Shard.options(num_gpus=0.5).remote(
+            lambda: EmbeddingModule(config)
+        ),  # GPU 0
+        Shard.options(num_gpus=1).remote(
+            lambda: GPTJBlocksModule(
+                config,
+                GPTJBlockShardConfig(0, 5, includ_layer_norm=False)
+            )
         ), # GPU 1
-        GPTJBlocksModule.remote(
-            config,
-            GPTJBlockShardConfig(6, 10, includ_layer_norm=False)
+        Shard.options(num_gpus=1).remote(
+            lambda: GPTJBlocksModule(
+                config,
+                GPTJBlockShardConfig(6, 10, includ_layer_norm=False)
+            )
         ), # GPU 2
-        GPTJBlocksModule.remote(
-            config,
-            GPTJBlockShardConfig(11, 15, includ_layer_norm=True)
+        Shard.options(num_gpus=1).remote(
+            GPTJBlocksModule(
+                config,
+                GPTJBlockShardConfig(11, 15, includ_layer_norm=True)
+            )
         ), # GPU 3
-        LMHeadModule.remote(config),     # GPU 0
+        Shard.options(num_gpus=0.5).remote(
+            LMHeadModule(config),
+        ), # GPU 0
     ]
     return model_shards
 
@@ -115,12 +125,9 @@ if __name__ == "__main__":
 
     ray.init()
 
-    # Global mailman.
-    mailman = Mailman.options(name="mailman").remote()
-
     try:
-        run_test(load_test_model())
-        #run_gpt_j(load_gpt_j(args), args)
+        #run_test(load_test_model())
+        run_gpt_j(load_gpt_j(args), args)
     except Exception:
         import time
         # Give Ray a few seconds to stream back the error logs.
