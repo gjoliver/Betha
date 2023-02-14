@@ -41,6 +41,29 @@ def run_gpt_j(shards, args):
     print("gpt-j: ", tokenizer.decode(out[0].tolist()))
 
 
+def load_gpt_j(args):
+    config = AutoConfig.from_pretrained(
+        args.model_dir
+    )
+    model_shards = [
+        EmbeddingModule.remote(config),  # GPU 0
+        GPTJBlocksModule.remote(
+            config,
+            GPTJBlockShardConfig(0, 5, includ_layer_norm=False)
+        ), # GPU 1
+        GPTJBlocksModule.remote(
+            config,
+            GPTJBlockShardConfig(6, 10, includ_layer_norm=False)
+        ), # GPU 2
+        GPTJBlocksModule.remote(
+            config,
+            GPTJBlockShardConfig(11, 15, includ_layer_norm=True)
+        ), # GPU 3
+        LMHeadModule.remote(config),     # GPU 0
+    ]
+    return model_shards
+
+
 def run_test(shards):
     for _ in range(10):
         random_data = torch.rand((1, 10))
@@ -66,29 +89,6 @@ def load_test_model():
     return model_shards
 
 
-def load_gpt_j(args):
-    config = AutoConfig.from_pretrained(
-        args.model_dir
-    )
-    model_shards = [
-        EmbeddingModule.remote(config),  # GPU 0
-        GPTJBlocksModule.remote(
-            config,
-            GPTJBlockShardConfig(0, 5, includ_layer_norm=False)
-        ), # GPU 1
-        GPTJBlocksModule.remote(
-            config,
-            GPTJBlockShardConfig(6, 10, includ_layer_norm=False)
-        ), # GPU 2
-        GPTJBlocksModule.remote(
-            config,
-            GPTJBlockShardConfig(11, 15, includ_layer_norm=True)
-        ), # GPU 3
-        LMHeadModule.remote(config),     # GPU 0
-    ]
-    return model_shards
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
@@ -107,8 +107,8 @@ if __name__ == "__main__":
     mailman = Mailman.options(name="mailman").remote()
 
     try:
-        #run_test(load_test_model())
-        run_gpt_j(load_gpt_j(args), args)
+        run_test(load_test_model())
+        #run_gpt_j(load_gpt_j(args), args)
     except Exception:
         import time
         # Give Ray a few seconds to stream back the error logs.

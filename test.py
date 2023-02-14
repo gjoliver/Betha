@@ -3,6 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+from mailman import fetch_tensor, save_tensor
+
+
 class TestBlock(nn.Module):
     def __init__(self, *shape):
         super().__init__()
@@ -24,7 +27,9 @@ class TestLMShard1(nn.Module):
         self.blk2 = TestBlock(10, 10)
 
     def forward(self, x):
-        return self.blk2(self.blk1(x))
+        # First shard. Store result in Mailman.
+        save_tensor("out1", self.blk2(self.blk1(x)))
+        return None
 
 
 @ray.remote
@@ -38,5 +43,6 @@ class TestLMShard2(nn.Module):
         self.blk3 = TestBlock(10, 10)
         self.out = nn.Linear(10, 10)
 
-    def forward(self, x):
-        return F.softmax(self.out(self.blk3(x)), dim=1)
+    def forward(self):
+        out1 = fetch_tensor("out1")
+        return F.softmax(self.out(self.blk3(out1)), dim=1)
