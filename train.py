@@ -1,4 +1,5 @@
 import argparse
+import time
 
 import ray
 import torch
@@ -43,20 +44,26 @@ def backward(shards):
 def run_gpt_j(shards, args):
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir)
 
-    inputs = tokenizer("i love large language model", return_tensors="pt")
-    # Self-supervised learning man! Inputs are the labels too.
-    labels = inputs['input_ids']
+    with open("alllines.txt", "r") as f:
+        start = time.time()
+        for i, line in enumerate(f.readlines()):
+            if i > 100: break
 
-    # Forward pass.
-    out = forward(shards, inputs=inputs, labels=labels)
+            inputs = tokenizer(line, return_tensors="pt")
+            # Self-supervised learning man! Inputs are the labels too.
+            labels = inputs['input_ids']
 
-    print("loss: ", out["loss"].numpy())
+            # Forward pass.
+            out = forward(shards, inputs=inputs, labels=labels)
 
-    # Backward pass.
-    backward(shards)
+            print("loss: ", out["loss"].numpy())
 
-    # Step.
-    ray.wait([shard.step.remote() for shard in shards])
+            # Backward pass.
+            backward(shards)
+
+            # Step.
+            ray.wait([shard.step.remote() for shard in shards])
+        print("takes ", time.time() - start)
 
 
 def load_gpt_j(args):
